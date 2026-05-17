@@ -12,11 +12,13 @@ st.title("✈️ Sistema Integrado de Metas e Localizadores - Azul")
 # O Streamlit busca as credenciais secretas (Secrets) automaticamente por trás das cenas
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# Função para carregar dados em tempo real da nuvem
+# Função para carregar dados em tempo real da nuvem (Forçando o Link Novo)
 def carregar_dados_nuvem():
-    # ttl="0m" garante que o Streamlit não guarde cache e busque dados sempre frescos
-    df_v_nuvem = conn.read(worksheet="vendas", ttl="0m")
-    df_e_nuvem = conn.read(worksheet="equipa_consultores", ttl="0m")
+    # Colocamos o seu link limpo diretamente dentro do comando read
+    url_sheets = "https://docs.google.com/spreadsheets/d/1ZKx8wpyCGswAXaUAjJ_69x1Qq2HvAt64/edit"
+    
+    df_v_nuvem = conn.read(spreadsheet=url_sheets, worksheet="vendas", ttl="0m")
+    df_e_nuvem = conn.read(spreadsheet=url_sheets, worksheet="equipa_consultores", ttl="0m")
     return df_v_nuvem, df_e_nuvem
 
 # Ler os dados vindos diretamente da sua planilha online
