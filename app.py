@@ -13,13 +13,17 @@ st.title("✈️ Sistema Integrado de Metas e Localizadores - Azul")
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # Função para carregar dados em tempo real da nuvem (Forçando o Link Novo)
+# Versão blindada para evitar quebras por cache ou abas ausentes
 def carregar_dados_nuvem():
-    # Colocamos o seu link limpo diretamente dentro do comando read
     url_sheets = "https://docs.google.com/spreadsheets/d/1ZKx8wpyCGswAXaUAjJ_69x1Qq2HvAt64/edit"
-    
-    df_v_nuvem = conn.read(spreadsheet=url_sheets, worksheet="vendas", ttl="0m")
-    df_e_nuvem = conn.read(spreadsheet=url_sheets, worksheet="equipa_consultores", ttl="0m")
-    return df_v_nuvem, df_e_nuvem
+    try:
+        df_v_nuvem = conn.read(spreadsheet=url_sheets, worksheet="vendas", ttl="0m")
+        df_e_nuvem = conn.read(spreadsheet=url_sheets, worksheet="equipa_consultores", ttl="0m")
+        return df_v_nuvem, df_e_nuvem
+    except Exception as e:
+        st.error("⚠️ Erro na conexão! Verifique se as abas 'vendas' e 'equipa_consultores' existem na planilha e se o e-mail da Conta de Serviço está adicionado como Editor.")
+        st.info(f"Detalhes técnicos para auditoria: {str(e)}")
+        st.stop()
 
 # Ler os dados vindos diretamente da sua planilha online
 df_vendas, df_equipa = carregar_dados_nuvem()
