@@ -1,6 +1,6 @@
 import streamlit as st
+from streamlit_gsheets import GSheetsConnection
 import pandas as pd
-import os
 import matplotlib.pyplot as plt
 from datetime import datetime
 
@@ -8,33 +8,22 @@ from datetime import datetime
 st.set_page_config(page_title="Gestão de Metas Quadrimestrais", layout="wide")
 st.title("✈️ Sistema Integrado de Metas e Localizadores - Azul")
 
-FICHEIRO_VENDAS = "vendas_quadrimestre.csv"
-FICHEIRO_EQUIPA = "equipa_consultores.csv"
+# 2. CONEXÃO DIRETA COM O GOOGLE SHEETS
+# O Streamlit busca as credenciais secretas (Secrets) automaticamente por trás das cenas
+conn = st.connection("gsheets", type=GSheetsConnection)
 
-# 2. INICIALIZAÇÃO AUTOMÁTICA DO SISTEMA COM OS TEUS DADOS ATUALIZADOS
-def inicializar_sistema():
-    if not os.path.exists(FICHEIRO_EQUIPA):
-        pd.DataFrame({"Nome": ["Isabelle", "Luciana", "Euclides"]}).to_csv(FICHEIRO_EQUIPA, index=False)
-        
-    if not os.path.exists(FICHEIRO_VENDAS):
-        dados_atualizados = [
-            # SEMANA 01
-            {"Quadrimestre": "2º Quad (Maio-Agosto 2026)", "Semana": "Semana 01", "Participante": "Isabelle", "Localizador": "LOCS01A", "Vendas Azul": 51698.74, "Vendas Geral": 1390.85},
-            {"Quadrimestre": "2º Quad (Maio-Agosto 2026)", "Semana": "Semana 01", "Participante": "Luciana", "Localizador": "LOCS01B", "Vendas Azul": 7737.67, "Vendas Geral": 28195.29},
-            {"Quadrimestre": "2º Quad (Maio-Agosto 2026)", "Semana": "Semana 01", "Participante": "Euclides", "Localizador": "LOCS01C", "Vendas Azul": 20920.00, "Vendas Geral": 0.0},
-            # SEMANA 02
-            {"Quadrimestre": "2º Quad (Maio-Agosto 2026)", "Semana": "Semana 02", "Participante": "Luciana", "Localizador": "LOCS02A", "Vendas Azul": 78730.40, "Vendas Geral": 50024.01},
-            {"Quadrimestre": "2º Quad (Maio-Agosto 2026)", "Semana": "Semana 02", "Participante": "Euclides", "Localizador": "LOCS02B", "Vendas Azul": 48793.11, "Vendas Geral": 0.0},
-            {"Quadrimestre": "2º Quad (Maio-Agosto 2026)", "Semana": "Semana 02", "Participante": "Isabelle", "Localizador": "LOCS02C", "Vendas Azul": 38367.08, "Vendas Geral": 6390.36},
-        ]
-        pd.DataFrame(dados_atualizados).to_csv(FICHEIRO_VENDAS, index=False)
+# Função para carregar dados em tempo real da nuvem
+def carregar_dados_nuvem():
+    # ttl="0m" garante que o Streamlit não guarde cache e busque dados sempre frescos
+    df_v_nuvem = conn.read(worksheet="vendas", ttl="0m")
+    df_e_nuvem = conn.read(worksheet="equipa_consultores", ttl="0m")
+    return df_v_nuvem, df_e_nuvem
 
-inicializar_sistema()
+# Ler os dados vindos diretamente da sua planilha online
+df_vendas, df_equipa = carregar_dados_nuvem()
 
-# Carregar dados
-df_equipa = pd.read_csv(FICHEIRO_EQUIPA)
-lista_consultores = df_equipa["Nome"].tolist()
-df_vendas = pd.read_csv(FICHEIRO_VENDAS)
+# Transformar a coluna da equipa numa lista para os menus selectbox
+lista_consultores = df_equipa["Nome"].dropna().tolist()
 
 TOTAL_SEMANAS = 16  
 semanas_lista = [f"Semana {i:02d}" for i in range(1, TOTAL_SEMANAS + 1)]
@@ -77,18 +66,20 @@ valores_alvo = {
 META_GLOBAL_QUAD = valores_alvo[nivel_alvo]
 meta_base_pura_semana = META_GLOBAL_QUAD / TOTAL_SEMANAS
 
-# 4. PAINEL LATERAL: CADASTRAR CONSULTOR
+# 4. PAINEL LATERAL: CADASTRAR CONSULTOR (GRAVAÇÃO DIRETA NA NUVEM)
 st.sidebar.markdown("---")
 with st.sidebar.expander("👤 Cadastrar Novo Colaborador"):
     novo_consultor = st.text_input("Nome do Novo Consultor:").strip()
     if st.button("Adicionar à Equipa"):
         if novo_consultor and novo_consultor not in lista_consultores:
+            # Criar nova linha e juntar à tabela atual da equipa
             nova_equipa = pd.concat([df_equipa, pd.DataFrame({"Nome": [novo_consultor]})], ignore_index=True)
-            nova_equipa.to_csv(FICHEIRO_EQUIPA, index=False)
-            st.success(f"✅ {novo_consultor} adicionado!")
+            # Atualizar a folha específica no Google Sheets
+            conn.update(worksheet="equipa_consultores", data=nova_equipa)
+            st.success(f"✅ {novo_consultor} salvo no Google Sheets!")
             st.rerun()
 
-# 5. PAINEL LATERAL: LANÇAMENTO DE VENDAS
+# 5. PAINEL LATERAL: LANÇAMENTO DE VENDAS (GRAVAÇÃO DIRETA NA NUVEM)
 st.sidebar.markdown("---")
 st.sidebar.header("📝 Lançamento de Vendas")
 
@@ -102,7 +93,8 @@ with st.sidebar.form(key="form_vendas_novas"):
     botao_enviar = st.form_submit_button("Gravar Venda")
 
 if botao_enviar:
-    localizador_existe = df_vendas["Localizador"].astype(str).str.upper() == localizador_sel
+    localizador_existe = df_vendas["Localizador"].astype(str).str.upper() == localizador_sel if not df_vendas.empty else pd.Series([False])
+    
     if not localizador_sel or not confirmacao:
         st.sidebar.error("⚠️ Preencha o localizador e valide a confirmação.")
     elif localizador_existe.any():
@@ -113,12 +105,14 @@ if botao_enviar:
             "Quadrimestre": quadrimestre_ativo, "Semana": semana_sel, "Participante": consultor_sel,
             "Localizador": localizador_sel, "Vendas Azul": venda_azul, "Vendas Geral": venda_geral
         }
-        df_vendas = pd.concat([df_vendas, pd.DataFrame([nova_venda_dict])], ignore_index=True)
-        df_vendas.to_csv(FICHEIRO_VENDAS, index=False)
-        st.sidebar.success("✅ Venda integrada!")
+        # Unir ao histórico online e enviar para a nuvem
+        df_atualizado = pd.concat([df_vendas, pd.DataFrame([nova_venda_dict])], ignore_index=True)
+        conn.update(worksheet="vendas", data=df_atualizado)
+        st.sidebar.success("✅ Venda integrada e salva no Google Sheets!")
         st.rerun()
 
-df_vendas_quad = df_vendas[df_vendas["Quadrimestre"] == quadrimestre_ativo]
+# Filtrar vendas do quadrimestre selecionado
+df_vendas_quad = df_vendas[df_vendas["Quadrimestre"] == quadrimestre_ativo] if not df_vendas.empty else pd.DataFrame(columns=df_vendas.columns)
 
 # 6. CÁLCULO DAS METAS ROLANTES SEMANAIS COLETIVAS
 metas_semanais_calculadas = {}
@@ -127,17 +121,13 @@ acumulado_deficit_geral = 0.0
 for sem in semanas_lista:
     meta_base_agencia_semana = meta_base_pura_semana + acumulado_deficit_geral
     metas_semanais_calculadas[sem] = max(meta_base_agencia_semana, 0.0)
-    vendas_reais_semana = df_vendas_quad[df_vendas_quad["Semana"] == sem]["Vendas Azul"].sum()
-    df_semana_teste = df_vendas_quad[df_vendas_quad["Semana"] == sem]
     
-    if not df_semana_teste.empty:
-        acumulado_deficit_geral = meta_base_agencia_semana - vendas_reais_semana
-    else:
-        acumulado_deficit_geral = meta_base_agencia_semana - vendas_reais_semana
+    vendas_reais_semana = df_vendas_quad[df_vendas_quad["Semana"] == sem]["Vendas Azul"].sum() if not df_vendas_quad.empty else 0.0
+    acumulado_deficit_geral = meta_base_agencia_semana - vendas_reais_semana
 
 # 7. INDICADORES DO TOPO
 st.subheader(f"📅 Monitorização: {quadrimestre_ativo}")
-total_azul_quad_atual = df_vendas_quad["Vendas Azul"].sum()
+total_azul_quad_atual = df_vendas_quad["Vendas Azul"].sum() if not df_vendas_quad.empty else 0.0
 percentual_quad = min(total_azul_quad_atual / META_GLOBAL_QUAD, 1.0) if META_GLOBAL_QUAD > 0 else 0.0
 
 col_top1, col_top2, col_top3 = st.columns(3)
@@ -154,17 +144,15 @@ aba_semana, aba_quadrimestre = st.tabs(["📊 Visão Semanal & Lançamentos", "�
 with aba_semana:
     semana_visualizar = st.selectbox("Selecione a Semana para Análise Detalhada:", semanas_lista, index=semanas_lista.index(semana_padrao))
     meta_coletiva_semana_atual = metas_semanais_calculadas.get(semana_visualizar, meta_base_pura_semana)
-    meta_individual_semana_atual = meta_coletiva_semana_atual / len(lista_consultores)
-    
-    # INDICADOR DE META ORIGINAL PURA SEM HISTÓRICO ROLANTE (Ex: R$ 58.706,15 por consultor no plano Royal)
-    meta_individual_original_estatica = meta_base_pura_semana / len(lista_consultores)
+    meta_individual_semana_atual = meta_coletiva_semana_atual / len(lista_consultores) if len(lista_consultores) > 0 else 0.0
+    meta_individual_original_estatica = meta_base_pura_semana / len(lista_consultores) if len(lista_consultores) > 0 else 0.0
 
-    df_da_semana = df_vendas_quad[df_vendas_quad["Semana"] == semana_visualizar]
-    total_azul_sem = df_da_semana["Vendas Azul"].sum()
-    total_geral_sem = df_da_semana["Vendas Geral"].sum()
+    df_da_semana = df_vendas_quad[df_vendas_quad["Semana"] == semana_visualizar] if not df_vendas_quad.empty else pd.DataFrame()
+    total_azul_sem = df_da_semana["Vendas Azul"].sum() if not df_da_semana.empty else 0.0
+    total_geral_sem = df_da_semana["Vendas Geral"].sum() if not df_da_semana.empty else 0.0
 
     st.markdown(f"#### 📈 Desempenho — {semana_visualizar}")
-    st.markdown(f"**Meta Geral Corrente (Com Reajuste):** R$ {meta_coletiva_semana_atual:,.2f} | **Meta Alvo Original Limpa (Sem Atrasos):** R$ {meta_base_pura_semana:,.2f}")
+    st.markdown(f"**Meta Geral Corrente (Com Reajuste):** R$ {meta_coletiva_semana_atual:,.2f} | **Meta Alvo Original Limpa:** R$ {meta_base_pura_semana:,.2f}")
     
     if meta_coletiva_semana_atual > 0:
         pct_coletiva = min(total_azul_sem / meta_coletiva_semana_atual, 1.0)
@@ -181,48 +169,45 @@ with aba_semana:
     c_sem2.metric("Vendas Fora da Azul", f"R$ {total_geral_sem:,.2f}")
     c_sem3.metric("Faturação Bruta", f"R$ {total_azul_sem + total_geral_sem:,.2f}")
 
-    # 9. CARTÕES INDIVIDUAIS COM AS DUAS BARRAS (ATUALIZADA VS ORIGINAL)
     st.markdown("##### 👥 Situação Atualizada por Consultor")
-    colunas_consultores = st.columns(len(lista_consultores))
-    
-    for idx, consultor in enumerate(lista_consultores):
-        df_consultor_sem = df_da_semana[df_da_semana["Participante"] == consultor]
-        vendas_azul_con = df_consultor_sem["Vendas Azul"].sum()
-        vendas_geral_con = df_consultor_sem["Vendas Geral"].sum()
-        
-        with colunas_consultores[idx]:
-            st.markdown(f"### 👤 {consultor}")
+    if len(lista_consultores) > 0:
+        colunas_consultores = st.columns(len(lista_consultores))
+        for idx, consultor in enumerate(lista_consultores):
+            vendas_azul_con = df_da_semana[df_da_semana["Participante"] == consultor]["Vendas Azul"].sum() if not df_da_semana.empty else 0.0
+            vendas_geral_con = df_da_semana[df_da_semana["Participante"] == consultor]["Vendas Geral"].sum() if not df_da_semana.empty else 0.0
             
-            # --- BARRA 1: META ATUALIZADA (COM O PREJUÍZO ACUMULADO) ---
-            if meta_individual_semana_atual > 0:
-                pct_conclusao_atual = min(vendas_azul_con / meta_individual_semana_atual, 1.0)
-                pct_texto_atual = (vendas_azul_con / meta_individual_semana_atual) * 100
-            else:
-                pct_conclusao_atual = 1.0
-                pct_texto_atual = 100.0
-            st.progress(pct_conclusao_atual, text=f"🎯 Progresso Meta Corrente Ajustada: {pct_texto_atual:.1f}%")
-            
-            # --- BARRA 2: META ORIGINAL FIXA (SEM HISTÓRICO DE ERROS - EX: OS R$ 58.706 LIMPOS) ---
-            if meta_individual_original_estatica > 0:
-                pct_conclusao_orig = min(vendas_azul_con / meta_individual_original_estatica, 1.0)
-                pct_texto_orig = (vendas_azul_con / meta_individual_original_estatica) * 100
-            else:
-                pct_conclusao_orig = 1.0
-                pct_texto_orig = 100.0
-            st.progress(pct_conclusao_orig, text=f"🏳️ Progresso Ref. Meta Original Limpa: {pct_texto_orig:.1f}%")
-            
-            st.markdown(" ") # Espaçamento entre as barras e os avisos
-            
-            valor_em_falta = meta_individual_semana_atual - vendas_azul_con
-            if valor_em_falta > 0:
-                st.warning(f"📉 **Falta para bater a meta ajustada:** R$ {valor_em_falta:,.2f}")
-            else:
-                st.success("🎉 **Meta Cumprida nesta semana!**")
-            
-            st.metric(label="Faturado na Azul", value=f"R$ {vendas_azul_con:,.2f}")
-            st.caption(f"Ref. Alvo Original Fixo da Semana: R$ {meta_individual_original_estatica:,.2f}")
-            st.caption(f"Vendas Fora da Azul: R$ {vendas_geral_con:,.2f}")
-            st.markdown("---")
+            with colunas_consultores[idx]:
+                st.markdown(f"### 👤 {consultor}")
+                
+                # Barra Meta Corrente
+                if meta_individual_semana_atual > 0:
+                    pct_c_atual = min(vendas_azul_con / meta_individual_semana_atual, 1.0)
+                    pct_t_atual = (vendas_azul_con / meta_individual_semana_atual) * 100
+                else:
+                    pct_c_atual, pct_t_atual = 1.0, 100.0
+                st.progress(pct_c_atual, text=f"🎯 Meta Ajustada: {pct_t_atual:.1f}%")
+                
+                # Barra Meta Original
+                if meta_individual_original_estatica > 0:
+                    pct_c_orig = min(vendas_azul_con / meta_individual_original_estatica, 1.0)
+                    pct_t_orig = (vendas_azul_con / meta_individual_original_estatica) * 100
+                else:
+                    pct_c_orig, pct_t_orig = 1.0, 100.0
+                st.progress(pct_c_orig, text=f"🏳️ Meta Original: {pct_t_orig:.1f}%")
+                
+                st.markdown(" ")
+                valor_em_falta = meta_individual_semana_atual - vendas_azul_con
+                if valor_em_falta > 0:
+                    st.warning(f"📉 **Falta:** R$ {valor_em_falta:,.2f}")
+                else:
+                    st.success("🎉 **Meta Batida!**")
+                
+                st.metric(label="Faturado na Azul", value=f"R$ {vendas_azul_con:,.2f}")
+                st.caption(f"Ref. Alvo Fixo: R$ {meta_individual_original_estatica:,.2f}")
+                st.caption(f"Fora da Azul: R$ {vendas_geral_con:,.2f}")
+                st.markdown("---")
+    else:
+        st.info("Nenhum consultor cadastrado na planilha.")
 
     st.markdown("**Comparativo Individual da Semana (Barras)**")
     if not df_da_semana.empty:
@@ -231,18 +216,16 @@ with aba_semana:
     else:
         st.info("Sem lançamentos nesta semana.")
 
-
 # ==================== ABA 2: RAIO-X DO QUADRIMESTRE ====================
 with aba_quadrimestre:
     st.markdown("### 🔍 Análise Consolidada do Período Inteiro")
-    df_acumulado = df_vendas_quad.groupby("Participante")[["Vendas Azul", "Vendas Geral"]].sum()
-    
-    if not df_acumulado.empty:
-        st.markdown("**📊 Torre de Faturamento: Azul vs Fora da Azul (Acumulado do Período)**")
+    if not df_vendas_quad.empty:
+        df_acumulado = df_vendas_quad.groupby("Participante")[["Vendas Azul", "Vendas Geral"]].sum()
+        st.markdown("**📊 Torre de Faturamento: Azul vs Fora da Azul**")
         st.bar_chart(df_acumulado, stack=True)
         st.markdown("---")
         
-        st.markdown("**📋 Tabela de Faturação Acumulada do Quadrimestre**")
+        st.markdown("**📋 Tabela de Faturação Acumulada**")
         df_resumo_total = df_acumulado.reset_index()
         df_resumo_total["Total Combinado"] = df_resumo_total["Vendas Azul"] + df_resumo_total["Vendas Geral"]
         
@@ -258,9 +241,9 @@ with aba_quadrimestre:
     st.markdown("**📈 Curva de Desempenho Semanal da Agência**")
     historico_linha = []
     for sem in semanas_lista:
-        vendas_sem = df_vendas_quad[df_vendas_quad["Semana"] == sem]["Vendas Azul"].sum()
-        meta_sem = metas_semanais_calculadas.get(sem, meta_base_pura_semana)
-        if sem in df_vendas_quad["Semana"].unique():
+        if not df_vendas_quad.empty and sem in df_vendas_quad["Semana"].unique():
+            vendas_sem = df_vendas_quad[df_vendas_quad["Semana"] == sem]["Vendas Azul"].sum()
+            meta_sem = metas_semanais_calculadas.get(sem, meta_base_pura_semana)
             historico_linha.append({"Semana": sem, "Realizado Azul": vendas_sem, "Meta Exigida": meta_sem})
             
     if historico_linha:
