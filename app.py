@@ -15,7 +15,7 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 # Função para carregar dados em tempo real da nuvem (Forçando o Link Novo)
 # Versão blindada para evitar quebras por cache ou abas ausentes
 def carregar_dados_nuvem():
-    url_sheets = "https://docs.google.com/spreadsheets/d/1ZKx8wpyCGswAXaUAjJ_69x1Qq2HvAt64/edit"
+    url_sheets = "https://docs.google.com/spreadsheets/d/1ua3qaHvOR5c6HYXKlCKO4MyKPOyKMaIoy0McnyZQ55c/edit"
     try:
         df_v_nuvem = conn.read(spreadsheet=url_sheets, worksheet="vendas", ttl="0m")
         df_e_nuvem = conn.read(spreadsheet=url_sheets, worksheet="equipa_consultores", ttl="0m")
